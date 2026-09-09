@@ -41,6 +41,21 @@ fn main() {
             .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
             .collect();
 
-        println!("Sample 0: {}", samples[0]);
+        // let peak = samples.iter().map(|s| s.abs()).max();
+
+        let rms = rms(&samples);
+        if rms >= 1000.0 {
+            println!("rms: {}", rms);
+        }
     }
+}
+
+fn rms(samples: &[i16]) -> f64 {
+    if samples.is_empty() {
+        return 0.0;
+    }
+
+    let sum_sq: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
+
+    (sum_sq / samples.len() as f64).sqrt()
 }
