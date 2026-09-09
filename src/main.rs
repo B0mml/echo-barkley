@@ -28,34 +28,66 @@ fn main() {
 
     println!("Connected to mic!...");
 
+    // 32ms per block
     let mut buffer = [0u8; 1024];
 
     driver.rx_enable().unwrap();
+
+    const BARK_THRESHOLD: f32 = 500.0; // TODO! Change back to higher value
+    const MIN_BARK_BLOCKS: u32 = 2; // 130ms
+    const MAX_BARK_BLOCKS: u32 = 20; // 640ms
+
+    let mut loud_blocks = 0;
+    let mut pause_blocks = 0;
+
     loop {
+        println!("loud_blocks {}", loud_blocks);
         driver
             .read(&mut buffer, esp_idf_svc::hal::delay::BLOCK)
             .unwrap();
 
-        let samples: Vec<_> = buffer
-            .chunks_exact(2)
-            .map(|chunk| i16::from_le_bytes([chunk[0], chunk[1]]))
-            .collect();
+        let rms = rms(&buffer);
+        println!(
+            "RMS: {:>5.0} | loud: {:>2} | pause: {:>2}",
+            rms, loud_blocks, pause_blocks
+        );
 
-        // let peak = samples.iter().map(|s| s.abs()).max();
-
-        let rms = rms(&samples);
-        if rms >= 1000.0 {
-            println!("rms: {}", rms);
+        // Stop multi triggering
+        if pause_blocks > 0 {
+            pause_blocks -= 1;
+            continue;
         }
+
+        if rms >= BARK_THRESHOLD {
+            loud_blocks += 1;
+            continue;
+        }
+        if loud_blocks >= MIN_BARK_BLOCKS && loud_blocks <= MAX_BARK_BLOCKS {
+            println!("BARK DETECTED!!! (DURATION: {} ms)", loud_blocks * 32);
+            pause_blocks = 32;
+        }
+
+        loud_blocks = 0;
     }
 }
 
-fn rms(samples: &[i16]) -> f64 {
-    if samples.is_empty() {
+fn rms(buffer: &[u8]) -> f32 {
+    let sample_count = buffer.len() / 2;
+    if sample_count == 0 {
         return 0.0;
     }
 
-    let sum_sq: f64 = samples.iter().map(|&s| (s as f64) * (s as f64)).sum();
+    let sum_sq: f32 = buffer
+        .chunks_exact(2)
+        .map(|chunk| {
+            let sample = i16::from_le_bytes([chunk[0], chunk[1]]) as f32;
+            sample * sample
+        })
+        .sum();
 
-    (sum_sq / samples.len() as f64).sqrt()
+    (sum_sq / sample_count as f32).sqrt()
 }
+
+// fn bark_filter(rms: &[f64]) -> bool {
+//     todo!();
+// }
