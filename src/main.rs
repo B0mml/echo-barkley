@@ -1,6 +1,10 @@
 use esp_idf_svc::hal::i2s::config::*;
 use esp_idf_svc::hal::i2s::I2sDriver;
 use esp_idf_svc::hal::peripherals::Peripherals;
+use esp_idf_svc::sys::esp_random;
+use smart_leds::hsv::{hsv2rgb, Hsv};
+use smart_leds::SmartLedsWrite;
+use ws2812_esp32_rmt_driver::Ws2812Esp32Rmt;
 fn main() {
     // It is necessary to call this function once. Otherwise, some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
@@ -26,6 +30,11 @@ fn main() {
     )
     .unwrap();
 
+    let led_pin = peripherals.pins.gpio27;
+    #[allow(deprecated)]
+    let channel = peripherals.rmt.channel0;
+    let mut ws2812 = Ws2812Esp32Rmt::new(channel, led_pin).unwrap();
+
     println!("Connected to mic!...");
 
     // 32ms per block
@@ -40,17 +49,14 @@ fn main() {
     let mut loud_blocks = 0;
     let mut pause_blocks = 0;
 
+    let mut color_hue = unsafe { esp_random() } as u8;
     loop {
-        println!("loud_blocks {}", loud_blocks);
+        loop_colors(&mut ws2812, &mut color_hue);
         driver
             .read(&mut buffer, esp_idf_svc::hal::delay::BLOCK)
             .unwrap();
 
         let rms = rms(&buffer);
-        println!(
-            "RMS: {:>5.0} | loud: {:>2} | pause: {:>2}",
-            rms, loud_blocks, pause_blocks
-        );
 
         // Stop multi triggering
         if pause_blocks > 0 {
@@ -91,3 +97,16 @@ fn rms(buffer: &[u8]) -> f32 {
 // fn bark_filter(rms: &[f64]) -> bool {
 //     todo!();
 // }
+
+fn loop_colors(ws_driver: &mut Ws2812Esp32Rmt, hue: &mut u8) {
+    let pixels = std::iter::repeat(hsv2rgb(Hsv {
+        hue: *hue,
+        sat: 255,
+        val: 8,
+    }))
+    .take(25);
+
+    ws_driver.write(pixels).unwrap();
+
+    *hue = hue.wrapping_add(10);
+}
