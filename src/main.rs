@@ -1,13 +1,11 @@
-use esp_idf_svc::hal::gpio::Input;
-use esp_idf_svc::hal::gpio::PinDriver;
-use esp_idf_svc::hal::gpio::Pull;
-use esp_idf_svc::hal::i2s::config::*;
-use esp_idf_svc::hal::i2s::I2sDriver;
+mod audio;
+mod hw;
+mod net;
+
+use esp_idf_svc::hal::i2s::{config::*, I2sDriver};
 use esp_idf_svc::hal::peripherals::Peripherals;
-use esp_idf_svc::sys::esp_random;
-use smart_leds::hsv::{hsv2rgb, Hsv};
-use smart_leds::{SmartLedsWrite, RGB8};
-use ws2812_esp32_rmt_driver::Ws2812Esp32Rmt;
+use hw::button::Button;
+use hw::led::Led;
 fn main() {
     // It is necessary to call this function once. Otherwise, some patches to the runtime
     // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
@@ -36,10 +34,6 @@ fn main() {
     let led_pin = peripherals.pins.gpio27;
     #[allow(deprecated)]
     let channel = peripherals.rmt.channel0;
-    let mut ws2812 = Ws2812Esp32Rmt::new(channel, led_pin).unwrap();
-
-    let button_driver = { PinDriver::input(peripherals.pins.gpio39, Pull::Floating).unwrap() };
-    let mut is_flashing = false;
 
     println!("Connected to mic!...");
 
@@ -55,19 +49,20 @@ fn main() {
     let mut loud_blocks = 0;
     let mut pause_blocks = 0;
 
-    let mut color_hue = unsafe { esp_random() } as u8;
+    let mut button = Button::new(peripherals.pins.gpio39);
+    let mut led = Led::new(led_pin, channel);
 
-    let mut button_last_frame_pressed = false;
     loop {
-        if is_button_just_pressed(&button_driver, &mut button_last_frame_pressed) {
-            is_flashing = !is_flashing;
+        if button.is_button_just_pressed() {
+            led.is_flashing = !led.is_flashing;
         }
 
-        if is_flashing {
-            loop_colors(&mut ws2812, &mut color_hue);
+        if led.is_flashing {
+            led.loop_colors();
         } else {
-            ws2812.write([RGB8::new(0, 0, 0)].iter().cloned()).unwrap();
+            led.turn_off();
         }
+
         driver
             .read(&mut buffer, esp_idf_svc::hal::delay::BLOCK)
             .unwrap();
@@ -84,7 +79,7 @@ fn main() {
             loud_blocks += 1;
             continue;
         }
-        if loud_blocks >= MIN_BARK_BLOCKS && loud_blocks <= MAX_BARK_BLOCKS {
+        if (MIN_BARK_BLOCKS..=MAX_BARK_BLOCKS).contains(&loud_blocks) {
             println!("BARK DETECTED!!! (DURATION: {} ms)", loud_blocks * 32);
             pause_blocks = 32;
         }
@@ -113,23 +108,3 @@ fn rms(buffer: &[u8]) -> f32 {
 // fn bark_filter(rms: &[f64]) -> bool {
 //     todo!();
 // }
-
-fn loop_colors(ws_driver: &mut Ws2812Esp32Rmt, hue: &mut u8) {
-    let pixels = std::iter::repeat(hsv2rgb(Hsv {
-        hue: *hue,
-        sat: 255,
-        val: 8,
-    }))
-    .take(25);
-
-    ws_driver.write(pixels).unwrap();
-
-    *hue = hue.wrapping_add(10);
-}
-
-fn is_button_just_pressed(btn: &PinDriver<'_, Input>, previously_pressed: &mut bool) -> bool {
-    let currently_pressed = btn.is_low();
-    let just_pressed = currently_pressed && !*previously_pressed;
-    *previously_pressed = currently_pressed;
-    just_pressed
-}
